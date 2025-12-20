@@ -3,23 +3,25 @@ const { Telegraf, Markup } = require('telegraf');
 const RSSParser = require('rss-parser');
 const axios = require('axios');
 const express = require('express');
+const Groq = require('groq-sdk');
 
-// 1. Health Check Server
+// 1. Health Server
 const app = express();
-app.get('/', (req, res) => res.send('<h1>Full-Keyword Scout Engine Online!</h1>'));
+app.get('/', (req, res) => res.send('<h1>Groq-Powered Scout Online!</h1>'));
 app.get('/ping', (req, res) => res.send('Bot is Alive!'));
 app.listen(process.env.PORT || 3000);
 
+// 2. Init
 const leadBot = new Telegraf(process.env.LEAD_BOT_TOKEN); 
 const logBot = new Telegraf(process.env.LOG_BOT_TOKEN);   
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const parser = new RSSParser();
 
 const LOG_ADMIN = process.env.MY_CHAT_ID; 
 const LEAD_USERS = process.env.LEAD_USER_IDS.split(','); 
-
 const processedLeads = new Set(); 
 
-// 2. FULL MEGA KEYWORD LIST (150+ Keywords restored)
+// 3. FULL MEGA KEYWORD LIST
 const KEYWORD_LIST = [
     "hiring", "freelance", "automation script", "business automation", "python automation", "custom automation tool", "internal tool development", "workflow automation", "process automation", "api integration", "api implementation", "webhook setup", "third party api integration", "backend integration", "backend optimization", "backend bug fixing", "performance optimization", "code refactoring", "legacy code cleanup", "database optimization", "database migration", "data migration", "mysql optimization", "postgresql optimization", "firebase integration", "authentication setup", "payment gateway integration", "stripe integration", "razorpay integration", "paypal integration", "saas customization", "saas backend", "saas mvp development", "mvp development", "feature implementation", "feature enhancement", "existing project improvements", "urgent bug fixing", "production bug fix", "hotfix required", "system debugging", "error fixing", "scalability improvement", "cloud deployment", "aws setup", "server optimization", "linux server setup", "cron job automation", "script to automate tasks", "internal dashboard development", "admin panel development", "reporting dashboard", "analytics dashboard", "custom reporting tool",
     "android app bug fixing", "android app enhancement", "android app maintenance", "android feature addition", "existing android app update", "ios app bug fixing", "ios feature implementation", "flutter app fixes", "react native app fixes", "app performance optimization", "app backend support", "app api integration", "mobile app maintenance", "firebase crash fix", "app publishing support", "play store issue fix", "app store submission help",
@@ -35,37 +37,24 @@ const logToBot = (msg) => {
     logBot.telegram.sendMessage(LOG_ADMIN, `⚙️ [LOG]: ${msg}`).catch(() => {});
 };
 
-// 3. Smart AI Analysis (Lenient Scoring)
+// 4. AI Analysis (Groq Llama 3.3)
 async function analyzeWithAI(title, content) {
     try {
-        const response = await axios.post("https://openrouter.ai/api/v1/chat/completions", {
-            model: "mistralai/mistral-7b-instruct:free", 
+        const chatCompletion = await groq.chat.completions.create({
             messages: [
-                { 
-                    role: "system", 
-                    content: `You are a Lead Analyst.
-                    - Score 1-100 on how good the lead is.
-                    - BE GENEROUS. If someone is offering work, score it 55+.
-                    - Write 2 lines of "Bhai-to-Bhai Advice" in HINGLISH.
-                    - Write a short pitch.
-                    Output ONLY raw JSON: {"score": number, "explanation": "text", "pitch": "text"}` 
-                },
+                { role: "system", content: "Analyze lead. Score 1-100. Give 55+ for Automation, Accounting, Backend. Write 2-line Hinglish advice. Output ONLY JSON: {\"score\": number, \"explanation\": \"text\", \"pitch\": \"text\"}" },
                 { role: "user", content: `Lead: ${title} - ${content}` }
-            ]
-        }, {
-            headers: { "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}` },
-            timeout: 25000
+            ],
+            model: "llama-3.3-70b-versatile", // Latest Groq model
+            response_format: { type: "json_object" }
         });
-
-        const rawContent = response.data.choices[0].message.content;
-        const jsonMatch = rawContent.match(/\{[\s\S]*\}/); // Robust JSON extraction
-        return JSON.parse(jsonMatch[0]);
+        return JSON.parse(chatCompletion.choices[0].message.content);
     } catch (err) { return null; }
 }
 
-// 4. Batch Scouting with Transparency Logs
+// 5. Batch Scouting
 async function scout() {
-    logToBot("🛰️ Starting batch scan...");
+    logToBot("🛰️ Scouting mega-list with Groq...");
     const subs = "forhire+jobbit+slavelabour+SaaS+SideProject+freelance_forhire+AppDev+Accounting";
     const batchSize = 30;
 
@@ -75,7 +64,7 @@ async function scout() {
 
         try {
             const feed = await parser.parseURL(url);
-            logToBot(`Batch ${Math.floor(i/batchSize) + 1}: Found ${feed.items.length} posts.`);
+            logToBot(`Batch ${Math.floor(i/batchSize) + 1}: Found ${feed.items.length} potential posts.`);
 
             for (const item of feed.items) {
                 const shortTitle = item.title.substring(0, 30);
@@ -84,29 +73,28 @@ async function scout() {
 
                 const ai = await analyzeWithAI(item.title, item.contentSnippet || "");
                 if (ai) {
-                    // TRANSPARENCY: Always log the score to Bot 1
                     if (ai.score < 50) {
                         logToBot(`❌ Rejected: "${shortTitle}..." | Score: ${ai.score}`);
                         continue;
                     }
 
-                    logToBot(`✅ Accepted: "${shortTitle}..." | Score: ${ai.score}. Sending...`);
+                    logToBot(`✅ Match! "${shortTitle}..." | Score: ${ai.score}`);
 
-                    const msg = `📍 **New Lead Detected**\n🔥 **Title:** ${item.title}\n-------------------\n💡 **Advice:** ${ai.explanation}\n-------------------\n🤖 **Pitch:** "${ai.pitch}"\n-------------------\n⚡ **Score:** ${ai.score}%`;
+                    const msg = `📍 **Lead Found**\n🔥 **Title:** ${item.title}\n-------------------\n💡 **Advice:** ${ai.explanation}\n-------------------\n🤖 **Pitch:** "${ai.pitch}"\n-------------------\n⚡ **Score:** ${ai.score}%`;
 
                     LEAD_USERS.forEach(userId => {
                         leadBot.telegram.sendMessage(userId.trim(), msg, Markup.inlineKeyboard([[Markup.button.url('🔗 Open Post', item.link)]]))
-                        .catch(e => logToBot(`🚨 Send Error: ${e.message}`));
+                        .catch(e => logToBot(`Send Error: ${e.message}`));
                     });
                 }
             }
-        } catch (err) { logToBot(`🚨 Error: ${err.message}`); }
+        } catch (err) { logToBot(`🚨 Scraper Error: ${err.message}`); }
     }
     logToBot("💤 Cycle complete.");
 }
 
-// 5. Execution
-logToBot("🚀 Engine Online. Multi-Batch Scout initialized.");
+// Start
+logToBot("🚀 Engine Online with Groq Llama 3.3.");
 scout();
 setInterval(scout, 180000); 
 
