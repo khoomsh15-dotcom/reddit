@@ -1,75 +1,92 @@
-require('dotenv').config();
-const { Telegraf, Markup } = require('telegraf');
-const RSSParser = require('rss-parser');
-const express = require('express');
+const { Telegraf } = require('telegraf');
+const axios = require('axios');
+const dns = require('dns').promises;
 
-// 1. Server for Render (Uptime ke liye)
-const app = express();
-app.get('/', (req, res) => res.send('<h1>Direct Lead Scout Online (No AI)</h1>'));
-app.get('/ping', (req, res) => res.send('Bot is Alive!'));
-app.listen(process.env.PORT || 3000);
-
-const leadBot = new Telegraf(process.env.LEAD_BOT_TOKEN); 
-const logBot = new Telegraf(process.env.LOG_BOT_TOKEN);   
-const parser = new RSSParser();
-
-const LOG_ADMIN = process.env.MY_CHAT_ID; 
-const rawIds = process.env.LEAD_USER_IDS || "";
-const LEAD_USERS = rawIds.split(',').map(id => id.trim()).filter(id => id.length > 5);
-
-// 2. Memory: Same lead dobara na aaye isliye Set
-const processedLeads = new Set(); 
-
-// 3. Mega Keyword List (Pure 150+)
-const KEYWORD_LIST = ["hiring", "freelance", "automation script", "business automation", "python automation", "custom automation tool", "internal tool development", "workflow automation", "process automation", "api integration", "api implementation", "webhook setup", "third party api integration", "backend integration", "backend optimization", "backend bug fixing", "performance optimization", "code refactoring", "legacy code cleanup", "database optimization", "database migration", "data migration", "mysql optimization", "postgresql optimization", "firebase integration", "authentication setup", "payment gateway integration", "stripe integration", "razorpay integration", "paypal integration", "saas customization", "saas backend", "saas mvp development", "mvp development", "feature implementation", "feature enhancement", "existing project improvements", "urgent bug fixing", "production bug fix", "hotfix required", "system debugging", "error fixing", "scalability improvement", "cloud deployment", "aws setup", "server optimization", "linux server setup", "cron job automation", "script to automate tasks", "internal dashboard development", "admin panel development", "reporting dashboard", "analytics dashboard", "custom reporting tool", "android app bug fixing", "android app enhancement", "android app maintenance", "android feature addition", "existing android app update", "ios app bug fixing", "ios feature implementation", "flutter app fixes", "react native app fixes", "app performance optimization", "app backend support", "app api integration", "mobile app maintenance", "firebase crash fix", "app publishing support", "play store issue fix", "app store submission help", "bookkeeping cleanup", "messy books cleanup", "accounting cleanup", "accounts reconciliation", "bank reconciliation", "financial reconciliation", "quickbooks setup", "quickbooks cleanup", "xero migration", "tally data migration", "accounting system setup", "invoice system setup", "billing system setup", "gst filing support", "tax compliance support", "financial reporting automation", "excel accounting model", "cashflow tracking", "profit loss reporting", "balance sheet preparation", "audit support", "payroll setup", "payroll automation", "process optimization", "operations setup", "business operations support", "startup operations", "founder support", "internal process setup", "workflow documentation", "standard operating procedures", "sop creation", "crm implementation", "crm setup", "crm customization", "hubspot setup", "zoho crm customization", "salesforce setup", "crm cleanup", "crm data migration", "notion workspace setup", "clickup setup", "project coordination support", "operations consultant", "internal systems setup", "lead generation setup", "b2b lead generation", "lead sourcing", "sales funnel setup", "funnel optimization", "cold outreach automation", "email automation setup", "appointment setting", "crm pipeline optimization", "sales ops", "sales automation", "outreach system setup", "linkedin outreach automation", "prospect list building", "market research support", "competitor analysis", "revenue operations", "growth operations", "data scraping", "web scraping", "data extraction", "scraping script", "automation scraper", "excel automation", "google sheets automation", "reporting automation", "dashboard automation", "ai workflow automation", "chatbot backend integration", "ai api integration", "openai api integration", "internal ai tools", "custom ai tool", "business ai automation", "migration support", "implementation support", "integration support", "system setup", "platform setup", "maintenance support", "technical support", "ongoing support", "long term support", "retainer support"];
-
-const logToBot = (msg) => {
-    console.log(`[LOG]: ${msg}`);
-    logBot.telegram.sendMessage(LOG_ADMIN, `⚙️ [LOG]: ${msg}`).catch(() => {});
+// 1. CONFIGURATION (Render Envs mein dalo)
+const CONFIG = {
+    SERPAPI_KEY: process.env.SERPAPI_KEY,
+    LOG_BOT_TOKEN: process.env.LOG_BOT_TOKEN,  // Status updates
+    LEAD_BOT_TOKEN: process.env.LEAD_BOT_TOKEN, // Verified leads only
+    MY_CHAT_ID: process.env.MY_CHAT_ID
 };
 
-// 4. Batch Scouting (No AI filtering)
-async function scout() {
-    logToBot("🛰️ Scouting batches (Direct Mode)...");
-    const subs = "forhire+jobbit+slavelabour+SaaS+SideProject+freelance_forhire+AppDev+Accounting";
-    const batchSize = 30;
+const logBot = new Telegraf(CONFIG.LOG_BOT_TOKEN);
+const leadBot = new Telegraf(CONFIG.LEAD_BOT_TOKEN);
+const MY_ID = CONFIG.MY_CHAT_ID;
 
-    for (let i = 0; i < KEYWORD_LIST.length; i += batchSize) {
-        const batch = KEYWORD_LIST.slice(i, i + batchSize).join(" OR ");
-        const url = `https://www.reddit.com/r/${subs}/search.rss?q=${encodeURIComponent(batch)}&sort=new&restrict_sr=on`;
+// 2. FREE EMAIL JUGAD (DNS MX CHECK)
+async function isEmailDeliverable(email) {
+    const domain = email.split('@')[1];
+    try {
+        const mx = await dns.resolveMx(domain);
+        return mx && mx.length > 0; // Agar Mail Server hai toh true
+    } catch (e) { return false; }
+}
 
-        try {
-            const feed = await parser.parseURL(url);
-            logToBot(`Batch ${Math.floor(i/batchSize) + 1}: Found ${feed.items.length} potential posts.`);
+// 3. ZIP CODE EXTRACTOR
+function extractZip(address) {
+    const match = address.match(/\b\d{5}\b/);
+    return match ? match[0] : "N/A";
+}
 
-            for (const item of feed.items) {
-                // Duplicate check
-                if (processedLeads.has(item.id)) continue;
-                processedLeads.add(item.id);
+// 4. MAIN HUNTER ENGINE
+const CITIES = ["Houston, TX", "Austin, TX", "Atlanta, GA", "Dallas, TX", "Miami, FL"];
+const NICHES = ["Roofing", "Tree Trimming", "HVAC", "Junk Removal"];
+let cIdx = 0, nIdx = 0;
 
-                // DIRECT BROADCAST: Koi AI filter nahi
-                const msg = `📍 **Direct Lead Found**\n🔥 **Title:** ${item.title}\n-------------------\n📝 **Snippet:** ${item.contentSnippet ? item.contentSnippet.substring(0, 200) + "..." : "No description."}\n-------------------\n⚡ **Status:** Direct Match (No AI Score)`;
+async function runWealthSniper() {
+    const city = CITIES[cIdx];
+    const niche = NICHES[nIdx];
 
-                for (const userId of LEAD_USERS) {
-                    try {
-                        await leadBot.telegram.sendMessage(userId, msg, Markup.inlineKeyboard([[Markup.button.url('🔗 Open Post', item.link)]]));
-                    } catch (e) {
-                        logToBot(`🚨 Send Error: ${e.message}`);
+    logBot.telegram.sendMessage(MY_ID, `🔍 [STATUS]: Scanning ${niche} in ${city}...`);
+
+    try {
+        // Step 1: Find Businesses with NO WEBSITE
+        const res = await axios.get('https://serpapi.com/search', {
+            params: { engine: "google_maps", q: `${niche} in ${city}`, api_key: CONFIG.SERPAPI_KEY }
+        });
+
+        for (const biz of res.data.local_results || []) {
+            if (!biz.website && biz.phone && biz.rating >= 4.0) {
+                
+                // Step 2: Extract Zip Code for Marketplace HQ
+                const zip = extractZip(biz.address || "");
+
+                // Step 3: Find Email using SerpApi Search
+                const sRes = await axios.get('https://serpapi.com/search', {
+                    params: { q: `"${biz.title}" ${city} contact email`, api_key: CONFIG.SERPAPI_KEY }
+                });
+                const email = JSON.stringify(sRes.data).match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g)?.[0];
+
+                if (email) {
+                    // Step 4: Free Jugad Verification
+                    const isValid = await isEmailDeliverable(email);
+                    
+                    if (isValid) {
+                        // SEND TO LEAD BOT (The HQ Output)
+                        const message = `💎 **GOD-TIER HQ LEAD**\n\n` +
+                                        `🏢 **Name:** ${biz.title}\n` +
+                                        `📧 **Email:** ${email}\n` +
+                                        `📞 **Phone:** ${biz.phone}\n` +
+                                        `📍 **City:** ${city}\n` +
+                                        `📌 **Zip:** ${zip}\n` +
+                                        `⭐ **Rating:** ${biz.rating}\n\n` +
+                                        `✅ *Verified by Exodus MX-Check*`;
+                        
+                        leadBot.telegram.sendMessage(MY_ID, message, { parse_mode: 'Markdown' });
                     }
                 }
             }
-        } catch (err) { logToBot(`🚨 Batch Error: ${err.message}`); }
+        }
+    } catch (e) { 
+        logBot.telegram.sendMessage(MY_ID, `🚨 [ERROR]: ${e.message}`); 
     }
-    logToBot("💤 Cycle complete. Waiting 3 mins.");
+
+    // Cycle through cities/niches
+    nIdx = (nIdx + 1) % NICHES.length;
+    if (nIdx === 0) cIdx = (cIdx + 1) % CITIES.length;
 }
 
-// Memory reset har 24h mein
-setInterval(() => processedLeads.clear(), 86400000);
-
-// EXECUTION
-logToBot("🚀 Engine Online (Direct Broadcast Mode).");
-scout();
-setInterval(scout, 180000); // 3-minute cycle
-
-leadBot.launch();
-logBot.launch();
+// Run every 45 minutes to save credits
+setInterval(runWealthSniper, 2700000); 
+logBot.launch(); leadBot.launch();
