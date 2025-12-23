@@ -3,30 +3,31 @@ const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const dns = require('dns').promises;
 
-// 1. WEB SERVER & PORT (For UptimeRobot)
+// 1. WEB SERVER (Render ko zinda rakhne ke liye)
 const app = express();
-const PORT = process.env.PORT || 10000; 
+const PORT = process.env.PORT || 10000;
 
 app.get('/', (req, res) => {
-    res.send('<body style="background:#000;color:#0f0;font-family:monospace;padding:50px;"><h1>🟢 EXODUS ENGINE: ONLINE</h1><p>Bot is actively hunting HQ leads...</p></body>');
+    res.send('<body style="background:#000;color:#0f0;font-family:monospace;padding:50px;"><h1>🚀 TURBO MODE: ACTIVE</h1><p>Hunting Leads Non-Stop...</p></body>');
 });
 
 app.listen(PORT, () => console.log(`🚀 Web Interface live on Port ${PORT}`));
 
-// 2. BOT INITIALIZATION
+// 2. CONFIG & BOTS
 const logBot = new Telegraf(process.env.LOG_BOT_TOKEN);
 const leadBot = new Telegraf(process.env.LEAD_BOT_TOKEN);
 const MY_ID = process.env.MY_CHAT_ID;
 
-// CUSTOM LOG FUNCTION: Ab saare logs tere Telegram par aayenge
+// HELPER: Send Logs to Telegram
 async function sendLog(msg) {
-    console.log(msg); // Render logs for backup
+    console.log(msg);
     try {
-        await logBot.telegram.sendMessage(MY_ID, `📝 [LOG]: ${msg}`);
-    } catch (e) { console.error("Telegram Log Error", e); }
+        // Sirf important logs bhejein taaki spam na ho, par abhi full dikhayenge
+        await logBot.telegram.sendMessage(MY_ID, `📝 ${msg}`);
+    } catch (e) { console.error(e); }
 }
 
-// 3. HQ VERIFICATION: FREE MX CHECK
+// 3. HQ CHECKS
 async function isEmailReal(email) {
     const domain = email.split('@')[1];
     try {
@@ -35,22 +36,21 @@ async function isEmailReal(email) {
     } catch (e) { return false; }
 }
 
-// 4. ZIP EXTRACTOR
 function getZip(address) {
     const match = address.match(/\b\d{5}\b/);
     return match ? match[0] : "N/A";
 }
 
-// 5. THE HUNTER ENGINE
-const CITIES = ["Houston, TX", "Austin, TX", "Atlanta, GA", "Miami, FL", "Phoenix, AZ"];
-const NICHES = ["Roofing", "Tree Trimming", "HVAC", "Pest Control"];
+// 4. THE TURBO HUNTER ENGINE
+const CITIES = ["Houston, TX", "Austin, TX", "Dallas, TX", "Miami, FL", "Phoenix, AZ", "Atlanta, GA"];
+const NICHES = ["Roofing", "Tree Trimming", "HVAC", "Pest Control", "Plumbing"];
 let cIdx = 0, nIdx = 0;
 
 async function runWealthSniper() {
     const city = CITIES[cIdx];
     const niche = NICHES[nIdx];
     
-    await sendLog(`🔍 Searching ${niche} in ${city}...`);
+    await sendLog(`🏎️ [TURBO START]: Hunting ${niche} in ${city}...`);
 
     try {
         const res = await axios.get('https://serpapi.com/search', {
@@ -58,54 +58,73 @@ async function runWealthSniper() {
         });
 
         const results = res.data.local_results || [];
-        await sendLog(`✅ Found ${results.length} businesses. Filtering for HQ...`);
+        // await sendLog(`✅ Found ${results.length} raw businesses. Filtering...`); 
+        // (Commented out to reduce spam, uncomment if needed)
 
         for (const biz of results) {
-            // HQ Filter: No Website + 4.0+ Rating
-            if (!biz.website && biz.phone && biz.rating >= 4.0) {
-                
-                await sendLog(`🎯 Target Found: ${biz.title}. Looking for email...`);
-
-                const sRes = await axios.get('https://serpapi.com/search', {
-                    params: { q: `"${biz.title}" ${city} contact email`, api_key: process.env.SERPAPI_KEY }
-                });
-                const email = JSON.stringify(sRes.data).match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g)?.[0];
-
-                if (email) {
-                    const isValid = await isEmailReal(email);
-                    if (isValid) {
-                        const zip = getZip(biz.address || "");
-                        const msg = `💎 **GOD-TIER HQ LEAD**\n\n` +
-                                    `🏢 **Name:** ${biz.title}\n` +
-                                    `📧 **Email:** ${email}\n` +
-                                    `📞 **Phone:** ${biz.phone}\n` +
-                                    `📍 **City:** ${city} (Zip: ${zip})\n` +
-                                    `⭐ **Rating:** ${biz.rating}\n\n` +
-                                    `✅ *Verified by Exodus MX-Check*`;
-                        
-                        await leadBot.telegram.sendMessage(MY_ID, msg, { parse_mode: 'Markdown' });
-                        await sendLog(`💰 [PROFIT ALERT]: HQ Lead sent to Lead Bot!`);
-                    }
-                } else {
-                    await sendLog(`⏩ Skipped ${biz.title} (No email found).`);
-                }
+            // FILTER: Sirf unko pakdo jinki WEBSITE NAHI HAI
+            if (biz.website) {
+                console.log(`⏩ Skipping ${biz.title} (Has Website)`);
+                continue; 
             }
+            
+            // FILTER: Rating achi honi chahiye
+            if (!biz.rating || biz.rating < 4.0) {
+                console.log(`⏩ Skipping ${biz.title} (Low Rating: ${biz.rating})`);
+                continue;
+            }
+
+            // Agar yahan pohancha, matlab potential lead hai
+            await sendLog(`🧐 Checking Lead: ${biz.title}...`);
+
+            // Email Search
+            const sRes = await axios.get('https://serpapi.com/search', {
+                params: { q: `"${biz.title}" ${city} contact email`, api_key: process.env.SERPAPI_KEY }
+            });
+            const email = JSON.stringify(sRes.data).match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g)?.[0];
+
+            if (email) {
+                const isValid = await isEmailReal(email);
+                if (isValid) {
+                    const zip = getZip(biz.address || "");
+                    const msg = `💎 **GOD-TIER HQ LEAD**\n\n` +
+                                `🏢 **Name:** ${biz.title}\n` +
+                                `📧 **Email:** ${email}\n` +
+                                `📞 **Phone:** ${biz.phone}\n` +
+                                `📍 **City:** ${city} (Zip: ${zip})\n` +
+                                `⭐ **Rating:** ${biz.rating}\n\n` +
+                                `✅ *Verified by Exodus System*`;
+                    
+                    await leadBot.telegram.sendMessage(MY_ID, msg, { parse_mode: 'Markdown' });
+                    await sendLog(`💰 [SOLD POTENTIAL]: Lead Sent to Channel!`);
+                } else {
+                    console.log(`❌ Invalid Email for ${biz.title}`);
+                }
+            } else {
+                console.log(`📭 No Email for ${biz.title}`);
+            }
+            
+            // 1 Second break to prevent CPU overload (Safety)
+            await new Promise(r => setTimeout(r, 1000));
         }
+
     } catch (e) { 
-        await sendLog(`🚨 [SYSTEM ERROR]: ${e.message}`); 
+        await sendLog(`🚨 [ERROR]: ${e.message}`); 
     }
 
-    // Cycle through cities/niches
+    // CYCLE UPDATE
     nIdx = (nIdx + 1) % NICHES.length;
     if (nIdx === 0) cIdx = (cIdx + 1) % CITIES.length;
+
+    // RECURSIVE CALL (No Waiting, Bas 5 sec saans lega)
+    console.log("🚀 Starting next batch immediately...");
+    setTimeout(runWealthSniper, 5000); 
 }
 
-// 6. IMMEDIATE START & INTERVAL
-logBot.launch(); leadBot.launch();
-sendLog("🚀 Exodus Engine Deployed and Initialized on Render.");
+// 5. LAUNCH
+logBot.launch();
+leadBot.launch();
+sendLog("🚀 EXODUS TURBO ENGINE: INITIALIZED");
 
-// First hunt starts immediately after deployment
-runWealthSniper(); 
-
-// Interval for continuous hunting (40 minutes)
-setInterval(runWealthSniper, 2400000);
+// Start Immediately
+runWealthSniper();
