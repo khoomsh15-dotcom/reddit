@@ -1,16 +1,16 @@
 {
   "name": "exodus-wealth-sniper",
   "version": "1.0.0",
-  "description": "HQ Lead Generation Bot for Home Services",
+  "description": "HQ Lead Generation Bot with Uptime Support",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
+    "express": "^4.18.2",
     "axios": "^1.6.0",
     "telegraf": "^4.14.0",
-    "groq-sdk": "^0.3.3",
-    "csv-writer": "^1.6.0"
+    "groq-sdk": "^0.3.3"
   },
   "engines": {
     "node": ">=18.0.0"
